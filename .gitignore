@@ -9,3 +9,5 @@ datasets
 basicsr.egg-info
 .eggs
 tb_logger
+.neptune
+output
