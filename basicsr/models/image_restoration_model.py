@@ -193,7 +193,7 @@ class ImageRestorationModel(BaseModel):
         if self.opt['train'].get('mixup', False):
             self.mixup_aug()
 
-        preds = self.net_g(self.lq)
+        preds = self.net_g(self.lq)  ## predict
         if not isinstance(preds, list):
             preds = [preds]
 

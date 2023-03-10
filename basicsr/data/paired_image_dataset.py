@@ -121,6 +121,7 @@ class PairedImageDataset(data.Dataset):
                                     float32=True)
         # normalize
         if self.mean is not None or self.std is not None:
+            print('bingo normalize\n Mean - std', self.mean, self.std)
             normalize(img_lq, self.mean, self.std, inplace=True)
             normalize(img_gt, self.mean, self.std, inplace=True)
 

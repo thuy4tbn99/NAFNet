@@ -23,6 +23,7 @@ def prepare_keys(folder_path, suffix='png'):
     print('Reading image path list ...')
     img_path_list = sorted(
         list(scandir(folder_path, suffix=suffix, recursive=False)))
+    print('img_path_list', img_path_list)
     keys = [img_path.split('.{}'.format(suffix))[0] for img_path in sorted(img_path_list)]
 
     return img_path_list, keys
@@ -131,3 +132,12 @@ def create_lmdb_for_SIDD():
     img_path_list, keys = prepare_keys(folder_path, 'png')
     make_lmdb_from_imgs(folder_path, lmdb_path, img_path_list, keys)
     '''
+
+def create_lmdb_for_imagenet():
+    folder_path = './datasets/ImageNet1k/val_blur30'
+    lmdb_path = './datasets/ImageNet1k/val_blur30.lmdb'
+
+    img_path_list, keys = prepare_keys(folder_path, None)
+    make_lmdb_from_imgs(folder_path, lmdb_path, img_path_list, keys)
+
+

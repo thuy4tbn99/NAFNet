@@ -30,7 +30,7 @@ class NAFBlock(nn.Module):
         dw_channel = c * DW_Expand
         self.conv1 = nn.Conv2d(in_channels=c, out_channels=dw_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
         self.conv2 = nn.Conv2d(in_channels=dw_channel, out_channels=dw_channel, kernel_size=3, padding=1, stride=1, groups=dw_channel,
-                               bias=True)
+                               bias=True) 
         self.conv3 = nn.Conv2d(in_channels=dw_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
         
         # Simplified Channel Attention
@@ -57,23 +57,29 @@ class NAFBlock(nn.Module):
         self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
 
     def forward(self, inp):
+        # print('NAFBLock:')
         x = inp
 
         x = self.norm1(x)
 
         x = self.conv1(x)
+        # print('after conv1', x.shape)
         x = self.conv2(x)
+        # print('after conv2', x.shape)
         x = self.sg(x)
         x = x * self.sca(x)
         x = self.conv3(x)
+        # print('after conv3', x.shape)
 
         x = self.dropout1(x)
 
         y = inp + x * self.beta
 
         x = self.conv4(self.norm2(y))
+        # print('after conv4', x.shape)
         x = self.sg(x)
         x = self.conv5(x)
+        # print('after conv6', x.shape)
 
         x = self.dropout2(x)
 
@@ -134,12 +140,12 @@ class NAFNet(nn.Module):
         inp = self.check_image_size(inp)
 
         x = self.intro(inp)
-        print('after intro', x.shape)
 
         encs = []
 
-        for encoder, down in zip(self.encoders, self.downs):
+        for idx, (encoder, down) in enumerate(zip(self.encoders, self.downs)):
             x = encoder(x)
+            # print(f'encoder {idx}: ', x.shape)
             encs.append(x)
             x = down(x)
 
@@ -149,8 +155,12 @@ class NAFNet(nn.Module):
             x = up(x)
             x = x + enc_skip
             x = decoder(x)
+        
 
-        x = self.ending(x)
+        x_segment_mask = detectron_infer(inp)
+        x_segment_mask = torch.unsqueeze(x_segment_mask, 1)#.cuda() # add channels
+        x = self.ending(x) 
+        x = x*x_segment_mask # da check value
         x = x + inp
 
         return x[:, :, :H, :W]
@@ -175,29 +185,67 @@ class NAFNetLocal(Local_Base, NAFNet):
             self.convert(base_size=base_size, train_size=train_size, fast_imp=fast_imp)
 
 
-if __name__ == '__main__':
-    img_channel = 3
-    width = 32
+# thuytt
+# ------------------------------
+# add detectron2 for segmentation
+from detectron2 import model_zoo
+from detectron2.engine import BatchPredictor
+from detectron2.config import get_cfg
+# from basicsr.utils import tensor2img
 
-    # enc_blks = [2, 2, 4, 8]
-    # middle_blk_num = 12
-    # dec_blks = [2, 2, 2, 2]
+def detectron_infer(x: torch.Tensor):
+    cfg = get_cfg()
+    cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
+    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # set threshold for this model
+    cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")
+    predictor = BatchPredictor(cfg)
 
-    enc_blks = [1, 1, 1, 28]
-    middle_blk_num = 1
-    dec_blks = [1, 1, 1, 1]
+    x_img = tensor2img(x)
+    # print('x', x.shape)
+    # print('x_img', x_img.shape)
     
-    net = NAFNet(img_channel=img_channel, width=width, middle_blk_num=middle_blk_num,
-                      enc_blk_nums=enc_blks, dec_blk_nums=dec_blks)
+    outputs = predictor(x_img)
+    # print('outputs', len(outputs), type(outputs[0]))
+    for outp in outputs:
+        x_masks = outp['instances'].pred_masks
+        if len(outp['instances']):
+            print('bingo have instances')
+            x_masks = torch.unsqueeze(torch.any(x_masks, 0), 0)
+            segmentation_masks = x_masks
+        else:
+            segmentation_masks = torch.unsqueeze((torch.ones(x_masks.shape[1:], dtype = torch.bool, device=x.device)), 0) # create h*w false tensor
+
+    return segmentation_masks
+
+def tensor2img(x):
+    x_img = (x * 255.0).round().to(torch.uint8)
+    return x_img
 
 
-    inp_shape = (3, 256, 256)
+if __name__ == '__main__':
+    pass
+    # img_channel = 3
+    # width = 32
 
-    from ptflops import get_model_complexity_info
+    # # enc_blks = [2, 2, 4, 8]
+    # # middle_blk_num = 12
+    # # dec_blks = [2, 2, 2, 2]
 
-    macs, params = get_model_complexity_info(net, inp_shape, verbose=False, print_per_layer_stat=False)
+    # enc_blks = [1, 1, 1, 28]
+    # middle_blk_num = 1
+    # dec_blks = [1, 1, 1, 1]
+    
+    # net = NAFNet(img_channel=img_channel, width=width, middle_blk_num=middle_blk_num,
+    #                   enc_blk_nums=enc_blks, dec_blk_nums=dec_blks)
 
-    params = float(params[:-3])
-    macs = float(macs[:-4])
 
-    print(macs, params)
+    # inp_shape = (3, 256, 256)
+
+    # from ptflops import get_model_complexity_info
+
+    # macs, params = get_model_complexity_info(net, inp_shape, verbose=False, print_per_layer_stat=False)
+
+    # params = float(params[:-3])
+    # macs = float(macs[:-4])
+
+    # print(macs, params)

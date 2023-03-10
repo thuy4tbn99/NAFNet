@@ -26,13 +26,16 @@ dataset_filenames = [
     osp.splitext(osp.basename(v))[0] for v in scandir(data_folder)
     if v.endswith('_dataset.py')
 ]
-# import all the dataset modules
+# import all the dataset modules (contains lots of Class)
 _dataset_modules = [
     importlib.import_module(f'basicsr.data.{file_name}')
     for file_name in dataset_filenames
 ]
 
 
+"""
+    Return: class which inherit from torch.util.data.Dataset
+"""
 def create_dataset(dataset_opt):
     """Create dataset.
 

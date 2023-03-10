@@ -12,6 +12,7 @@ import random
 import time
 import torch
 from os import path as osp
+import neptune.new as neptune
 
 from basicsr.data import create_dataloader, create_dataset
 from basicsr.data.data_sampler import EnlargedSampler
@@ -39,6 +40,9 @@ def parse_options(is_train=True):
     parser.add_argument('--input_path', type=str, required=False, help='The path to the input image. For single image inference only.')
     parser.add_argument('--output_path', type=str, required=False, help='The path to the output image. For single image inference only.')
 
+    # tags neptune
+    parser.add_argument('--tags', default='nafnet', nargs='+', type=str, help='Tags for neptune')
+
     args = parser.parse_args()
     opt = parse(args.opt, is_train=is_train)
 
@@ -63,11 +67,16 @@ def parse_options(is_train=True):
         opt['manual_seed'] = seed
     set_random_seed(seed + opt['rank'])
 
-    if args.input_path is not None and args.output_path is not None:
-        opt['img_path'] = {
-            'input_img': args.input_path,
-            'output_img': args.output_path
-        }
+    # # raw code
+    # if args.input_path is not None and args.output_path is not None:
+    #     opt['img_path'] = {
+    #         'input_img': args.input_path,
+    #         'output_img': args.output_path
+    #     }
+    #     opt['input_path'] = args.input_path
+    #     opt['output_path'] = args.output_path
+    
+    opt = {**opt, **vars(args)}
 
     return opt
 
@@ -99,8 +108,8 @@ def create_train_val_dataloader(opt, logger):
     train_loader, val_loader = None, None
     for phase, dataset_opt in opt['datasets'].items():
         if phase == 'train':
-            dataset_enlarge_ratio = dataset_opt.get('dataset_enlarge_ratio', 1)
-            train_set = create_dataset(dataset_opt)
+            dataset_enlarge_ratio = dataset_opt.get('dataset_enlarge_ratio', 1) # return 1
+            train_set = create_dataset(dataset_opt) 
             train_sampler = EnlargedSampler(train_set, opt['world_size'],
                                             opt['rank'], dataset_enlarge_ratio)
             train_loader = create_dataloader(
@@ -146,6 +155,14 @@ def create_train_val_dataloader(opt, logger):
 def main():
     # parse options, set distributed setting, set ramdom seed
     opt = parse_options(is_train=True)
+    print('opt', opt)
+
+    # -- neptune
+    run = neptune.init_run(
+        project="thuy4tbn99/NAFNet",
+        tags=opt['tags'],
+        api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJmMDZlN2UwYS1lODc1LTRlMTctYjQzNS00MmEwOTJiZWU5YzIifQ==",
+    )
 
     torch.backends.cudnn.benchmark = True
     # torch.backends.cudnn.deterministic = True
@@ -205,9 +222,9 @@ def main():
 
     # create message logger (formatted outputs)
     msg_logger = MessageLogger(opt, current_iter, tb_logger)
-    logger.info("abc")
+   
     # dataloader prefetcher
-    prefetch_mode = opt['datasets']['train'].get('prefetch_mode')
+    prefetch_mode = opt['datasets']['train'].get('prefetch_mode')    
     if prefetch_mode is None or prefetch_mode == 'cpu':
         prefetcher = CPUPrefetcher(train_loader)
     elif prefetch_mode == 'cuda':
@@ -250,6 +267,8 @@ def main():
             #     exit(0)
             iter_time = time.time() - iter_time
             # log
+            iter_check = 10
+            # if current_iter % iter_check == 0:
             if current_iter % opt['logger']['print_freq'] == 0:
                 reduce_loss_dict = model.log_dict
                 print('reduce_loss_dict', reduce_loss_dict)
@@ -260,13 +279,15 @@ def main():
                 # print('msg logger .. ', current_iter)
                 msg_logger(log_vars)
 
+                run['loss'].append(log_vars['l_pix'])
+
             # save models and training states
             if current_iter % opt['logger']['save_checkpoint_freq'] == 0:
                 logger.info('Saving models and training states.')
                 model.save(epoch, current_iter)
 
             # validation
-            val_after_iter = 1000
+            # val_after_iter = 10 # j4t
             # if opt.get('val') is not None and (current_iter % opt['val']['val_freq'] == 0 or current_iter % val_after_iter==0):
             if opt.get('val') is not None and (current_iter % opt['val']['val_freq'] == 0):
                 time_val_begin = time.time()
@@ -285,9 +306,8 @@ def main():
                 log_vars.update(model.get_current_log())
                 msg_logger(log_vars)
                 logger.info(f"time_run_val: {time_run_val}, time_run_train_log: {time_run_train_log}")
-                
 
-
+                run['psnr'].append(log_vars['m_psnr'])
 
             data_time = time.time()
             iter_time = time.time()
@@ -312,6 +332,7 @@ def main():
     if tb_logger:
         tb_logger.close()
 
+    run.stop()
 
 if __name__ == '__main__':
     import os
